@@ -1,0 +1,306 @@
+---
+title: "Projection of Aging Factor onto Bulk RNAseq Datasets"
+author: "Scott Ginebaugh"
+output:
+    html_document:
+      keep_md: true
+      toc: true
+      theme: united
+      toc_depth: 2
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = FALSE, warning = FALSE, message = FALSE, fig.width = 7, fig.height = 7, cache = FALSE)
+knitr::opts_knit$set(root.dir = rprojroot::find_rstudio_root_file())
+```
+
+```{r load_libraries, include = FALSE, message = FALSE, warning = FALSE}
+library(Seurat)
+library(qs)
+library(magrittr)
+library(dplyr)
+library(tidyverse)
+library(MOFA2)
+library(MOFAcellulaR)
+
+library(ggplot2)
+library(ggpmisc)
+library(ggprism)
+
+library(DESeq2)
+library(nichenetr)
+```
+
+```{r functions, include = FALSE, message = FALSE, warning = FALSE}
+## TODO move functions to a function file and pull in
+getFactorLoadings <- function(model, factor) {
+  factor_loadings <- get_weights(model, as.data.frame = T) %>%
+    as.data.frame() %>%
+    dplyr::mutate(
+      feature = strsplit(as.character(feature), "_") %>%
+        map_chr(., ~ .x[[2]]),
+      ctype = strsplit(as.character(view), "_") %>%
+        map_chr(., ~ .x[[1]])
+    ) %>%
+    dplyr::rename("factors" = factor) %>%
+    dplyr::select(-view) %>%
+    dplyr::filter(factors == factor) %>%
+    dplyr::select(-factors)
+  
+  return(factor_loadings)
+}
+
+projectFactorOnBulk <- function(norm_expr, factor_loadings, bulk_meta) {
+  fact_score <- decoupleR::run_wmean(
+    norm_expr,
+    network = factor_loadings,
+    .source = ctype,
+    .target = feature,
+    .mor = value
+  ) %>%
+    dplyr::filter(statistic == "norm_wmean") %>%
+    left_join(bulk_meta, by = c("condition" = "sample"))
+
+  fact_score_mat <- fact_score %>%
+    dplyr::select(condition, source, score) %>%
+    pivot_wider(names_from = source, values_from = score) %>%
+    column_to_rownames("condition") %>%
+    as.matrix() %>%
+    scale()
+
+  return(fact_score_mat)
+}
+
+```
+
+```{r import_snRNA_data, include = FALSE, message = FALSE, warning = FALSE}
+seurat <- qread("data/processed/annotated_seurat_perez.qs")
+
+mofa_model <- qread("data/processed/mofa_model_perez.qs")
+
+sample_meta <- unique(seurat@meta.data[, c("sample", "age_group", "age_numeric")])
+
+aging_factor <- "Factor4"
+factor_loadings <- getFactorLoadings(model = mofa_model, factor = aging_factor)
+factor_loadings_mat <- factor_loadings %>%
+  pivot_wider(names_from = ctype, values_from = value, values_fill = 0) %>%
+  column_to_rownames("feature") %>%
+  as.matrix()
+
+```
+
+```{r import_and_organize_bulk_human_sarcopenia_dataset, include = FALSE, message = FALSE, warning = FALSE}
+## import
+bulk_perez_cts <- read.csv("data/raw/bulk_RNA/perez_bulk/bulk_counts.csv", row.names = "Symbol")
+
+## organize metadata
+bulk_perez_meta <- GEOquery::getGEO(filename = "data/raw/bulk_RNA/perez_bulk/GSE167186-GPL20301_series_matrix.txt.gz")
+bulk_perez_meta <- bulk_perez_meta@phenoData@data
+bulk_perez_meta <- bulk_perez_meta[, c(1, 52:59)]
+colnames(bulk_perez_meta) <- c("sample", "walkTest", "ageNum", "biodex", "gripStrength", "group", "legPress", "sppb", "upAndGo")
+rownames(bulk_perez_meta) <- bulk_perez_meta$sample
+bulk_perez_meta$walkTest %<>% as.numeric()
+bulk_perez_meta$ageNum %<>% as.numeric()
+bulk_perez_meta$biodex %<>% as.numeric()
+bulk_perez_meta$gripStrength %<>% as.numeric()
+bulk_perez_meta$legPress %<>% as.numeric()
+bulk_perez_meta$sppb %<>% as.numeric()
+bulk_perez_meta$upAndGo %<>% as.numeric()
+
+bulk_perez_meta$group[bulk_perez_meta$group == "UNCLASSIFIED"] <- "Old Healthy"
+bulk_perez_meta$group %<>% as.factor()
+
+## filter and normalize
+bulk_perez_cts <- bulk_perez_cts[rowSums(bulk_perez_cts > 10) > 3, ]
+
+dds_perez <- DESeqDataSetFromMatrix(countData = bulk_perez_cts, colData = bulk_perez_meta, design = ~group)
+vsd_perez_dst <- vst(dds_perez)
+vsd_in_perez <- assay(vsd_perez_dst)
+vsd_in_perez <- vsd_in_perez[rownames(vsd_in_perez) %in% rownames(factor_loadings_mat), ]
+
+```
+
+```{r import_and_organize_bulk_mouse_aging_dataset, include = FALSE, message = FALSE, warning = FALSE}
+## import
+bulk_mouse_counts <- read.csv("data/raw/bulk_RNA/Wolff_circadian/GSE201207_count_216.csv")
+
+## delete duplicate gene name with lower expression
+bulk_mouse_counts <- bulk_mouse_counts[order(rowSums(bulk_mouse_counts[, -1]), decreasing = TRUE), ]
+bulk_mouse_counts <- bulk_mouse_counts[!duplicated(bulk_mouse_counts$X), ]
+rownames(bulk_mouse_counts) <- bulk_mouse_counts$X
+bulk_mouse_counts <- bulk_mouse_counts %>%
+  select(-X) %>%
+  as.matrix()
+
+## organize metadata
+bulk_mouse_meta <- data.frame(
+  row.names = colnames(bulk_mouse_counts),
+  sample = colnames(bulk_mouse_counts),
+  time = word(colnames(bulk_mouse_counts), 1, 1, "\\."),
+  age = word(colnames(bulk_mouse_counts), 2, 2, "\\."),
+  tissue = word(colnames(bulk_mouse_counts), 3, 3, "\\.")
+)
+
+## filter low expression
+bulk_mouse_counts <- bulk_mouse_counts[rowSums(bulk_mouse_counts > 10) > 2, ] 
+
+## subset to shared genes with human using nichenetR package
+one2one <- rownames(bulk_mouse_counts) %>% convert_mouse_to_human_symbols(version = 2)
+bulk_mouse_counts <- bulk_mouse_counts[!is.na(one2one), ]
+rownames(bulk_mouse_counts) <- one2one[!is.na(one2one)]
+
+## normalize 
+dds_mouse <- DESeqDataSetFromMatrix(bulk_mouse_counts, bulk_mouse_meta, design = ~ tissue + age)
+vsd_mouse_dst <- vst(dds_mouse, blind = FALSE)
+vsd_in_mouse <- assay(vsd_mouse_dst)
+vsd_in_mouse <- vsd_in_mouse[rownames(vsd_in_mouse) %in% unique(factor_loadings$feature), ]
+```
+
+# Introduction
+
+In our [previous analysis](https://github.com/spginebaugh/muscle_aging_ML/blob/main/scripts/analysis/MOFA_results_plotting_and_enrichment.md), we used factor analysis to extract the Aging Factor from a [single-nucleus RNAseq dataset](https://doi.org/10.18632/aging.204435) of muscle tissue from young and old donors.
+
+We can extend that analysis by projecting the Aging Factor onto bulk RNAseq datasets. Although scRNAseq is great for its ability to investigate different cell types, its cost often results in a small number of donors per dataset. This is true for the snRNAseq dataset of interest, which had N=17 donors. Although this is on the larger end for a single-cell dataset, N=17 is not enough donors to get strong correlations between transcriptomic signatures and clinical information. Bulk RNAseq is much cheaper in comparison, so bulk RNAseq datasets tend to contain more donors, which enables better correlations with clinical measurements. 
+
+Here, we project the Aging Factor onto a large bulkRNAseq dataset (also from the Perez et al. manuscript) of muscle aging and [sarcopenia](https://en.wikipedia.org/wiki/Sarcopenia) (age-related muscle wasting). We show that the Aging Factor projection is able to separate donors by condition, and is a better predictor of clinical measurements of muscle strength than medical diagnosis.
+
+Additionally, we project the Aging Factor across species onto a [mouse bulkRNAseq dataset](https://doi.org/10.1016/j.celrep.2022.111982). We find that we are able to project across species, suggesting that our Aging Factor is conserved across mammalian evolution (or, at least conserved between mice and humans). 
+
+# Results
+
+## Projection of Aging Factor onto Human Sarcopenia Data
+
+We first utilize a bulk RNAseq dataset consisting of 19 Young Health donors, 33 Old Healthy donors, and 24 old donors diagnosed with sarcopenia. We can see from the PCA of this dataset that this is already noticeable separation between the three patient groups.
+
+```{r human_pca_plot, echo = FALSE, message = FALSE, warning = FALSE}
+plotPCA(vsd_perez_dst, intgroup = "group")
+```
+
+We then project the aging factor, and can see that it almost-perfectly separates the Young Healthy donors from the Old Healthy and Sarcopenia donors. We also see that it generally separates the Old Healthy donors from the Sarcopenia donors.
+
+```{r project_onto_human, include = FALSE, message = FALSE, warning = FALSE}
+fact_score_perez <- projectFactorOnBulk(norm_expr = vsd_in_perez,
+                                        factor_loadings = factor_loadings,
+                                        bulk_meta = bulk_perez_meta)
+
+## organize for plotting
+fact_score_perez <- fact_score_perez[order(rownames(fact_score_perez)), sort(colnames(fact_score_perez))]
+bulk_perez_meta <- bulk_perez_meta[order(rownames(bulk_perez_meta)), ]
+bulk_perez_meta$group %<>% as.character()
+
+bulk_perez_meta$group %<>% factor(levels = c("Young Healthy", "Old Healthy", "Sarcopenia"))
+
+row_ha <- rowAnnotation(
+  condition = bulk_perez_meta$group,
+  col = list(condition = c(
+    "Young Healthy" = "green",
+    "Old Healthy" = "yellow",
+    "Sarcopenia" = "darkred"
+  ))
+)
+```
+
+```{r human_projection_heatmap, echo = FALSE, message = FALSE, warning = FALSE}
+Heatmap(
+  fact_score_perez,
+  right_annotation = row_ha,
+  show_row_names = FALSE,
+  clustering_method_rows = "ward.D",
+  column_title = "Projection of Aging Factor onto Human Bulk RNAseq",
+  heatmap_legend_param = list(title = "Factor Projection Score")
+)
+```
+
+We separate this data by both cell type and donor condition. We can see that the projection from some cell types, like fast skeletal muscle, appear to separate Old Healthy donors from Sarcopenia donors better than other cell types, like endothelial cells. This may suggest that age-related transcriptomics changes in fast skeletal muscle are more important to the development of sarcopenia than age-related changes in endothelial cells. However, this approach needs more validation, and may benefit from restricting the projection to only cell-type specific Aging Factor genes. 
+
+```{r human_proj_celltype_diff, echo = FALSE, message = FALSE, warning = FALSE}
+plot_fact_cell_proj <- data.frame(fact_score_perez, group = bulk_perez_meta$group) %>% reshape2::melt()
+plot_fact_cell_proj$group %<>% factor(levels = c("Young Healthy", "Old Healthy", "Sarcopenia"))
+
+ggplot(plot_fact_cell_proj, aes(x = variable, y = value, fill = group)) +
+  geom_boxplot() +
+  theme_prism() +
+  theme(axis.text.x = element_text(angle = 45, vjust = 1, hjust = 1)) +
+  xlab(label = "") +
+  ylab(label = "Aging Factor Score")
+```
+
+Next, we can investigate how well our aging factor correlated with various clinical data from the donors. For improved clarity, we restrict this analysis to only Old Healthy and Sarcopenia donors.
+
+
+```{r project_onto_human_oldonly, include = FALSE, message = FALSE, warning = FALSE}
+## redo with only aged for clinical correlations
+bulk_perez_meta_old <- bulk_perez_meta[bulk_perez_meta$group != "Young Healthy",]
+fact_score_perez_old <- projectFactorOnBulk(norm_expr = vsd_in_perez[,bulk_perez_meta$group != "Young Healthy"],
+                                            factor_loadings = factor_loadings,
+                                            bulk_meta = bulk_perez_meta_old)
+
+
+## organize for plotting
+fact_score_perez_old <- fact_score_perez_old[order(rownames(fact_score_perez_old)), sort(colnames(fact_score_perez_old))]
+bulk_perez_meta_old <- bulk_perez_meta_old[order(rownames(bulk_perez_meta_old)), ]
+bulk_perez_meta_old$group %<>% as.character()
+
+bulk_perez_meta_old$group %<>% factor(levels = c("Old Healthy", "Sarcopenia"))
+
+```
+
+```{r human_clinical_correlations, fig.width = 12, echo = FALSE, message = FALSE, warning = FALSE}
+clin_cor <- data.frame(factor_score = rowMeans(fact_score_perez_old), bulk_perez_meta_old[, c(6, 2:5, 7:9)]) %>% 
+  rownames_to_column("sample") %>%
+  reshape2::melt(id.vars = c("factor_score", "sample", "group")) %>%
+  filter(variable != "walkTest")
+
+ggplot(clin_cor, aes(x = factor_score, y = value)) +
+  geom_point(aes(color = group)) +
+  theme_classic() +
+  facet_wrap(~variable, scale = "free_y") +
+  stat_poly_line(se = FALSE) +
+  ylab("Clinical Measurement") +
+  xlab("Aging Factor Expression")
+```
+We find that the Aging Factor Expression of each donor is a better predictor of grip strength and leg press than diagnosis or age. Thus, we can use factor projection as an accurate predictor of clinical outcomes. Importantly, this analysis also reveals that sarcopenia is largely "advanced aging" -- essentially, a stronger expression of the natural degenerative changes that occur during the aging process.
+
+## Projection of Aging Factor onto Mouse Aging Data
+
+Next, we tested the ability to project our Aging Factor across species. We used a [dataset](https://doi.org/10.1016/j.celrep.2022.111982) of samples from young, aged, and old mice, across 6 different tissues. We first examined the ability of factor projection to separate the different age groups in the muscle tissue, and see that it is relatively capable of separating the age groups.
+
+```{r project_onto_mouse, include = FALSE, message = FALSE, warning = FALSE}
+fact_score_mouse <- projectFactorOnBulk(norm_expr = vsd_in_mouse,
+                                        factor_loadings = factor_loadings,
+                                        bulk_meta = bulk_mouse_meta)
+
+## organize for plotting
+fact_score_mouse <- fact_score_mouse[order(rownames(fact_score_mouse)), sort(colnames(fact_score_mouse))]
+bulk_mouse_meta <- bulk_mouse_meta[order(rownames(bulk_mouse_meta)), ]
+bulk_mouse_meta$age <- factor(bulk_mouse_meta$age, levels = c("young", "aged", "old"))
+bulk_mouse_meta$tissue <- factor(bulk_mouse_meta$tissue, levels = c("muscle", "heart", "lung", "kidney", "hypothalamus", "adrenal"))
+
+
+plot_mat_mouse <- data.frame(
+  rowSums(fact_score_mouse),
+  group = bulk_mouse_meta$age,
+  time = bulk_mouse_meta$time,
+  tissue = bulk_mouse_meta$tissue
+) %>% reshape2::melt()
+```
+
+```{r mouse_muscle_boxplot, echo = FALSE, message = FALSE, warning = FALSE}
+subset(plot_mat_mouse, tissue == "muscle") %>%
+  ggplot(aes(x = group, y = value, fill = group)) +
+  geom_boxplot() +
+  geom_point() +
+  theme_prism()
+```
+
+We next investigate the capabilities of factor projection across different tissues. We see that it is able to separate age groups in muscle and heart, but not in other organs. This is a positive outcome, as it demonstrates that our Aging Factor is specific to muscle aging.
+
+```{r mouse_all_boxplot, fig.width = 12, echo = FALSE, message = FALSE, warning = FALSE}
+ggplot(plot_mat_mouse, aes(x = group, y = value, fill = group)) +
+  geom_boxplot() +
+  geom_point() +
+  theme_classic() +
+  facet_wrap(~tissue, scales = "free_y")
+```
+Based on these results, I hypothesize that this projection of factors can be utilized to quantify how accurately a mouse model system recapitulates human disease.
+
