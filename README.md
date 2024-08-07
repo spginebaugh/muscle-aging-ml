@@ -17,4 +17,6 @@ Here, we analyze single-nucleus RNAseq data from [Perez et al. 2022](https://doi
 
 The code to for the preprocessing of the dataset can be found [here](https://github.com/spginebaugh/muscle_aging_ML/tree/main/scripts/preparation)
 
-The results and visulazation of the analysis can be found [here](https://github.com/spginebaugh/muscle_aging_ML/blob/main/scripts/analysis/MOFA_results_plotting_and_enrichment.md)
+The results and visualization of the analysis can be found [here](https://github.com/spginebaugh/muscle_aging_ML/blob/main/scripts/analysis/MOFA_results_plotting_and_enrichment.md)
+
+Projection of the Aging Factor onto bulk RNAseq datasets can be found [here](https://github.com/spginebaugh/muscle_aging_ML/blob/main/scripts/analysis/Projection_of_Aging_Factor_onto_Bulk_RNAseq_Datasets.md)
