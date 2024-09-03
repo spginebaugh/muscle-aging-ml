@@ -68,6 +68,8 @@ Idents(seurat) <- seurat$RNA_ranger_snn_res.0.4
 # ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 ## score with Panglao gene lists
 seurat_ann <- seurat
+
+## TODO: clean this up
 panglao <- readr::read_tsv("data/processed/PanglaoDB_markers_27_Mar_2020.tsv")
 panglao <- panglao[panglao$species %in% c("Hs", "Mm Hs"), ]
 panglao <- panglao[panglao$`official gene symbol` %in% rownames(seurat_ann), ]

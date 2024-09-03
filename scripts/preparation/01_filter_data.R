@@ -16,37 +16,7 @@ library(ggplot2)
 library(magrittr)
 library(dplyr)
 
-
-# ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
-#                                 Functions                                ----
-# ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
-importSeurat <- function(cellranger_folder_path, file_names_vec, file_h5_path) {
-  seurat_list <- list()
-  for (file_index in 1:length(file_names_vec)) {
-    seurat_data <- Read10X_h5(filename = paste0(
-      cellranger_folder_path,
-      file_names_vec[file_index],
-      file_h5_path
-    ))
-    seurat_list[file_index] <- CreateSeuratObject(
-      counts = seurat_data,
-      project = file_names_vec[file_index]
-    )
-  }
-  names(seurat_list) <- file_names_vec
-
-  seurat <- merge(
-    x = seurat_list[[1]],
-    y = seurat_list[2:length(seurat_list)],
-    add.cell.id = file_names_vec
-  )
-  seurat <- JoinLayers(seurat) # merge samples in Seurat V5
-
-  colnames(seurat@meta.data)[1] <- "sample"
-
-  return(seurat)
-}
-
+source("utils/rna_utils.R")
 
 # ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 #                          Import Cellbender Outputs                       ----
@@ -55,7 +25,7 @@ file_names_vec <- list.files("data/raw/cellranger_outputs/")
 
 
 ## loop over cellbender outputs for each sample and place in seurat object
-seurat <- importSeurat(
+seurat <- import_seurat(
   cellranger_folder_path = "data/raw/cellranger_outputs/",
   file_names_vec = file_names_vec,
   file_h5_path = "/outs/cellbender/cellbender_out_filtered.h5"
@@ -63,7 +33,7 @@ seurat <- importSeurat(
 
 ## import uncorrected data from cellranger as alternative and add to seurat object
 ## this will allow us to use cellbender's empty droplet selection with cellranger outputs
-seurat_ranger <- importSeurat(
+seurat_ranger <- import_seurat(
   cellranger_folder_path = "data/raw/cellranger_outputs/",
   file_names_vec = file_names_vec,
   file_h5_path = "/outs/raw_feature_bc_matrix.h5"
@@ -90,7 +60,7 @@ runinfo <- read.csv("fastqs/Perez_SraRunInfo.csv")
 runinfo <- runinfo[, c("GEO_Accession..exp.", "Group", "Age")]
 colnames(runinfo) <- c("sample", "age_group", "age_numeric")
 
-## organoize seurat object metadata
+## organize seurat object metadata
 seurat$barcodes <- colnames(seurat)
 metadata <- seurat@meta.data
 metadata <- left_join(metadata, runinfo, by = "sample")
