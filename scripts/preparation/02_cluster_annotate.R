@@ -67,23 +67,7 @@ Idents(seurat) <- seurat$RNA_ranger_snn_res.0.4
 #                                  Annotate                                ----
 # ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 ## score with Panglao gene lists
-seurat_ann <- seurat
-
-## TODO: clean this up
-panglao <- readr::read_tsv("data/processed/PanglaoDB_markers_27_Mar_2020.tsv")
-panglao <- panglao[panglao$species %in% c("Hs", "Mm Hs"), ]
-panglao <- panglao[panglao$`official gene symbol` %in% rownames(seurat_ann), ]
-panglao <- split(panglao$`official gene symbol`, panglao$`cell type`)
-
-seurat_ann <- AddModuleScore(seurat_ann, panglao)
-colnames(seurat_ann@meta.data)[(ncol(seurat_ann@meta.data) - length(panglao) + 1):ncol(seurat_ann@meta.data)] <- names(panglao)
-
-pang_ann <- seurat_ann@meta.data[, (ncol(seurat_ann@meta.data) - length(panglao) + 1):ncol(seurat_ann@meta.data)]
-pang_ann <- scale(pang_ann)
-agg_pang <- aggregate(pang_ann, list(seurat_ann@active.ident), mean)
-rownames(agg_pang) <- agg_pang[, 1]
-agg_pang <- agg_pang[, -1]
-agg_pang <- t(agg_pang)
+panglao_scores <- score_panglao(seurat)
 
 ## info plots
 DimPlot(seurat, group.by = c("sample", "age_group"))
