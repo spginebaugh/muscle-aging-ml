@@ -56,6 +56,12 @@ seurat_ranger <- seurat_ranger[, colnames(seurat_ranger) %in% colnames(seurat_be
 
 seurat_ranger$barcodes <- colnames(seurat_ranger) # add barcodes for merging metadata later
 
+
+#~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+#                              Detect Doublets                             ----
+#~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+
 ## split and process
 seurat_split <- SplitObject(seurat_ranger, split.by = "sample")
 
