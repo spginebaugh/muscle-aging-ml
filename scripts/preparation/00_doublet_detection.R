@@ -57,6 +57,21 @@ seurat_ranger <- import_seurat(
   subset_cell_names = colnames(seurat_bender_01)
 )
 
+## remake seurat_ranger so that has the same cell ordering as seurat_bender
+sr_counts <- GetAssayData(seurat_ranger, layer = "counts")
+sr_counts <- sr_counts[,order(match(colnames(sr_counts), colnames(seurat_bender_01)))]
+seurat_ranger <- CreateSeuratObject(counts = sr_counts)
+colnames(seurat_ranger@meta.data)[1] <- "sample"
+seurat_ranger$barcode <- colnames(seurat_ranger)
+rm(sr_counts)
+gc()
+
+## check
+table(colnames(seurat_bender_01) == colnames(seurat_bender_05))
+table(colnames(seurat_bender_01) == colnames(seurat_ranger))
+table(rownames(seurat_bender_01) == rownames(seurat_bender_05))
+table(rownames(seurat_bender_01) == rownames(seurat_ranger))
+
 get_cellranger_barcodes <- function(cellranger_folder_path, file_names_vec, file_barcodes_path){
   cell_names_vec <- character()
   for (file_index in 1:length(file_names_vec)) {
@@ -82,22 +97,9 @@ seurat_ranger_filtered_cells <- get_cellranger_barcodes(
 #~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 #                              Detect Doublets                             ----
 #~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
-
-
-## split and process
-seurat_split <- SplitObject(seurat_bender_01, split.by = "sample")
-
-for (i in 1:length(seurat_split)) {
-  seurat_split[[i]] <- NormalizeData(seurat_split[[i]])
-  seurat_split[[i]] <- FindVariableFeatures(seurat_split[[i]])
-  seurat_split[[i]] <- ScaleData(seurat_split[[i]])
-  seurat_split[[i]] <- RunPCA(seurat_split[[i]])
-}
-## functions pulled in from 'rna_doublet_scoring_functions.R'
-seurat_split <- run_scDblFinder(seurat_split)
-seurat_split <- run_scds(seurat_split)
-seurat_split <- run_doubletfinder(seurat_split)
-seurat_ranger <- add_doublet_metadata(seurat_ranger, seurat_split)
+seurat_bender_01 <- run_all_doublet_detection(seurat_bender_01)
+seurat_bender_05 <- run_all_doublet_detection(seurat_bender_05)
+seurat_ranger <- run_all_doublet_detection(seurat_ranger)
 
 # ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 #                                Save Metadata                             ----
