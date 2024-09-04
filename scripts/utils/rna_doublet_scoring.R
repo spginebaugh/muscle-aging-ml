@@ -69,28 +69,46 @@ run_doubletfinder <- function(seurat_split){
       nExp = nexp_poi[[sample_index]], reuse.pANN = FALSE, sct = FALSE
     )
   }
+
   return(seurat_split)
 }
 
 ## add doublet metadata to merged seruat object
-add_doublet_metadata <- function(seurat_merged, seurat_split){
+add_doublet_metadata <- function(seurat_obj, seurat_split){
   metalist <- lapply(seurat_split, function(x) {
     metadata <- x@meta.data
     return(metadata)
   })
   metalist <- lapply(metalist, function(x) {
-    colnames(x)[(ncol(x) - 1):ncol(x)] <- c("DF_score", "DF_classification")
+    colnames(x)[(ncol(x) - 1):ncol(x)] <- c("doubletfind_score", "doubletfind_class")
     return(x)
   })
   
   metalist <- do.call("rbind", metalist[1:length(metalist)])
   
-  seurat_merged$scDbl_class <- metalist$scDbl_class
-  seurat_merged$cxds_score <- metalist$cxds_score
-  seurat_merged$bcds_score <- metalist$bcds_score
-  seurat_merged$hybrid_score <- metalist$hybrid_score
-  seurat_merged$DF_score <- metalist$DF_score
-  seurat_merged$DF_classification <- metalist$DF_classification
+  seurat_obj$scDbl_class <- metalist$scDbl_class
+  seurat_obj$cxds_score <- metalist$cxds_score
+  seurat_obj$bcds_score <- metalist$bcds_score
+  seurat_obj$hybrid_score <- metalist$hybrid_score
+  seurat_obj$doubletfind_score <- metalist$doubletfind_score
+  seurat_obj$doubletfind_class <- metalist$doubletfind_class %>% tolower()
   
-  return(seurat_merged)
+  return(seurat_obj)
+}
+
+run_all_doublet_detection <- function(seurat_obj, split.by = "sample"){
+  seurat_split <- SplitObject(seurat_obj, split.by = "sample")
+  
+  for (i in 1:length(seurat_split)) {
+    seurat_split[[i]] <- NormalizeData(seurat_split[[i]])
+    seurat_split[[i]] <- FindVariableFeatures(seurat_split[[i]])
+    seurat_split[[i]] <- ScaleData(seurat_split[[i]])
+    seurat_split[[i]] <- RunPCA(seurat_split[[i]])
+  }
+  ## functions pulled in from 'rna_doublet_scoring_functions.R'
+  seurat_split <- run_scDblFinder(seurat_split)
+  seurat_split <- run_scds(seurat_split)
+  seurat_split <- run_doubletfinder(seurat_split)
+  seurat_obj <- add_doublet_metadata(seurat_obj, seurat_split)
+  return(seurat_obj)
 }
