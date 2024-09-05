@@ -16,63 +16,37 @@ library(ggplot2)
 library(magrittr)
 library(dplyr)
 
-source("utils/rna_utils.R")
 
 # ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 #                          Import Cellbender Outputs                       ----
 # ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
-file_names_vec <- list.files("data/raw/cellranger_outputs/")
-
-
-## loop over cellbender outputs for each sample and place in seurat object
-seurat <- import_seurat(
-  cellranger_folder_path = "data/raw/cellranger_outputs/",
-  file_names_vec = file_names_vec,
-  file_h5_path = "/outs/cellbender/cellbender_out_filtered.h5"
-)
-
-## import uncorrected data from cellranger as alternative and add to seurat object
-## this will allow us to use cellbender's empty droplet selection with cellranger outputs
-seurat_ranger <- import_seurat(
-  cellranger_folder_path = "data/raw/cellranger_outputs/",
-  file_names_vec = file_names_vec,
-  file_h5_path = "/outs/raw_feature_bc_matrix.h5"
-)
-
-
-## cellbender has better emptydrop removal than cellranger
-## subset to only cells, as determined by cellbender
-seurat_ranger <- seurat_ranger[, colnames(seurat_ranger) %in% colnames(seurat)]
-
-## normalize, add to original seurat object as separate assay
-## then remove unneccesary seurat_ranger object
-seurat_ranger %<>% NormalizeData()
-seurat[["RNA_ranger"]] <- seurat_ranger[["RNA"]]
-
-rm(seurat_ranger)
-
+seurat <- qread("data/processed/perez_doublets_detected.qs")
 
 # ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 #                              Add in Metadata                             ----
 # ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 ## get patient info from metadata csv
-runinfo <- read.csv("fastqs/Perez_SraRunInfo.csv")
+runinfo <- read.csv("data/metadata/Perez_SraRunInfo.csv")
 runinfo <- runinfo[, c("GEO_Accession..exp.", "Group", "Age")]
 colnames(runinfo) <- c("sample", "age_group", "age_numeric")
 
 ## organize seurat object metadata
-seurat$barcodes <- colnames(seurat)
 metadata <- seurat@meta.data
 metadata <- left_join(metadata, runinfo, by = "sample")
-rownames(metadata) <- metadata$barcodes
+rownames(metadata) <- metadata$barcode
 seurat@meta.data <- metadata
 
 ## add in cell quality information
-seurat$mitoRatio <- PercentageFeatureSet(object = seurat, pattern = "^MT-") / 100
-seurat$riboRatio <- PercentageFeatureSet(object = seurat, pattern = "^RP[SL][[:digit:]]|^RPLP[[:digit:]]|^RPSA") / 100
+seurat$mitoRatio_ranger <- PercentageFeatureSet(object = seurat, pattern = "^MT-", assay = "RNA") / 100
+seurat$riboRatio_ranger <- PercentageFeatureSet(object = seurat, 
+                                                pattern = "^RP[SL][[:digit:]]|^RPLP[[:digit:]]|^RPSA", 
+                                                assay = "RNA") / 100
 seurat$log10GenesPerUMI <- log10(seurat$nFeature_RNA) / log10(seurat$nCount_RNA)
 
-
+seurat$mitoRatio_b01 <- PercentageFeatureSet(object = seurat, pattern = "^MT-", assay = "B01") / 100
+seurat$riboRatio_b01 <- PercentageFeatureSet(object = seurat, 
+                                             pattern = "^RP[SL][[:digit:]]|^RPLP[[:digit:]]|^RPSA",
+                                             assay = "B01") / 100
 
 # ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 #                                     QC                                   ----
@@ -103,11 +77,19 @@ metadata %>%
   geom_vline(xintercept = 500)
 
 metadata %>%
-  ggplot(aes(color = sample, x = mitoRatio, fill = sample)) +
+  ggplot(aes(color = sample, x = mitoRatio_ranger, fill = sample)) +
   geom_density(alpha = 0.2) +
   scale_x_log10() +
   theme_classic() +
-  geom_vline(xintercept = 0.05)
+  geom_vline(xintercept = 0.03)
+
+metadata %>%
+  ggplot(aes(color = sample, x = mitoRatio_b01, fill = sample)) +
+  geom_density(alpha = 0.2) +
+  scale_x_log10() +
+  theme_classic() +
+  geom_vline(xintercept = 0.03)
+
 
 metadata %>%
   ggplot(aes(color = sample, x = riboRatio, fill = sample)) +
@@ -131,7 +113,11 @@ metadata %>%
 # ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 #                                  Filtering                               ----
 # ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
-seurat <- subset(seurat, nFeature_RNA > 300 & nCount_RNA > 500 & mitoRatio < 0.05 & log10GenesPerUMI > 0.8)
+seurat <- subset(seurat, nFeature_RNA > 300 & 
+                   nCount_RNA > 500 & 
+                   mitoRatio_ranger < 0.03 & 
+                   mitoRatio_b01 < 0.03 & 
+                   log10GenesPerUMI > 0.8)
 
 
 # ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
