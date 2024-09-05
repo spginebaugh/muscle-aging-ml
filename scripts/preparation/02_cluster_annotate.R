@@ -24,15 +24,6 @@ seurat <- qread("data/processed/filtered_seurat.qs")
 
 load("data/processed/cycle.rda") # cell cycle
 
-doublet_meta <- read.csv("data/processed/perez_doublet_metadata.csv") # doublet metadata from 00_doublet detection
-doublet_meta <- doublet_meta[, 5:ncol(doublet_meta)] # remove redundant info
-
-## add doublet metadata to seurat
-metadata <- seurat@meta.data
-metadata <- left_join(metadata, doublet_meta, by = "barcodes")
-rownames(metadata) <- metadata$barcodes
-seurat@meta.data <- metadata
-
 
 # ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 #                            Normalize and Cluster                         ----
