@@ -101,8 +101,44 @@ seurat_bender_01 <- run_all_doublet_detection(seurat_bender_01)
 seurat_bender_05 <- run_all_doublet_detection(seurat_bender_05)
 seurat_ranger <- run_all_doublet_detection(seurat_ranger)
 
+
+#~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+#                                 merge data                               ----
+#~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+seurat_out <- seurat_ranger
+colnames(seurat_out@meta.data)[5:10] <- paste0(colnames(seurat_out@meta.data)[5:10],"_ranger")
+metadata_out <- seurat_out@meta.data
+
+metadata_b01 <- seurat_bender_01@meta.data
+colnames(metadata_b01)[5:10] <- paste0(colnames(metadata_b01)[5:10],"_b01")
+
+metadata_b05 <- seurat_bender_05@meta.data
+colnames(metadata_b05)[5:10] <- paste0(colnames(metadata_b05)[5:10],"_b05")
+
+metadata_out <- left_join(metadata_out, metadata_b01[,4:10], by = "barcode")
+metadata_out <- left_join(metadata_out, metadata_b05[,4:10], by = "barcode")
+
+metadata_out$is_ranger_cell <- FALSE
+metadata_out$is_ranger_cell[metadata_out$barcode %in% seurat_ranger_filtered_cells] <- TRUE
+
+rownames(metadata_out) <- metadata_out$barcode
+seurat_out@meta.data <- metadata_out
+
+seurat_out[["B01"]] <- CreateAssay5Object(counts = GetAssayData(seurat_bender_01))
+seurat_out[["B05"]] <- CreateAssay5Object(counts = GetAssayData(seurat_bender_05))
 # ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
-#                                Save Metadata                             ----
+#                                  Save data                                ----
 # ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
-metadata <- seurat_ranger@meta.data
-write.csv(metadata, "data/processed/perez_doublet_metadata.csv")
+qsave(seurat_out, "data/processed/perez_doublets_detected.qs")
+
+
+
+
+
+
+
+
+
+
+
+
