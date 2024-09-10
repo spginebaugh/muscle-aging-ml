@@ -183,7 +183,7 @@ seurat$annotation_level1 <- plyr::revalue(seurat$B01_snn_res.0.2,
                                         '9' = "NMJ_2",
                                         '10' = "Lymphoid",
                                         '11' = "Mast"))
-
+seurat$annotation_level1 <- factor(seurat$annotation_level1)
 ## check annotation
 DimPlot(seurat, group.by = "annotation_level1", label = TRUE)
 
