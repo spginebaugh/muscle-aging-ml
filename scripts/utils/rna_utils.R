@@ -91,7 +91,7 @@ import_seurat_from_cellbender <- function(cellranger_folder_path, file_names_vec
 
 score_panglao <- function(seurat_obj){
   # returns a matrix of scaled celltype scores for each cluster 
-  panglao <- readr::read_tsv("data/processed/PanglaoDB_markers_27_Mar_2020.tsv")
+  panglao <- readr::read_tsv("/media/largedata/universal_files/PanglaoDB_markers_27_Mar_2020.tsv")
   panglao <- panglao[panglao$species %in% c("Hs", "Mm Hs"), ]
   panglao <- panglao[panglao$`official gene symbol` %in% rownames(seurat_obj), ]
   panglao <- split(panglao$`official gene symbol`, panglao$`cell type`)
