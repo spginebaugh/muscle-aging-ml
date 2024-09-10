@@ -70,20 +70,20 @@ metadata %>%
   ggtitle("NCells")
 
 metadata %>%
-  ggplot(aes(color = sample, x = nFeature_B05, fill = sample)) +
-  geom_density(alpha = 0.2) +
-  scale_x_log10() +
-  theme_classic() +
-  ylab("Cell density") +
-  geom_vline(xintercept = 300)
-
-metadata %>%
-  ggplot(aes(color = sample, x = nCount_B05, fill = sample)) +
+  ggplot(aes(color = sample, x = nFeature_B01, fill = sample)) +
   geom_density(alpha = 0.2) +
   scale_x_log10() +
   theme_classic() +
   ylab("Cell density") +
   geom_vline(xintercept = 500)
+
+metadata %>%
+  ggplot(aes(color = sample, x = nCount_B01, fill = sample)) +
+  geom_density(alpha = 0.2) +
+  scale_x_log10() +
+  theme_classic() +
+  ylab("Cell density") +
+  geom_vline(xintercept = 700)
 
 metadata %>%
   ggplot(aes(color = sample, x = mitoRatio_ranger, fill = sample)) +
@@ -97,24 +97,24 @@ metadata %>%
   geom_density(alpha = 0.2) +
   scale_x_log10() +
   theme_classic() +
-  geom_vline(xintercept = 0.02)
+  geom_vline(xintercept = 0.01)
 
 metadata %>%
   ggplot(aes(color = sample, x = mitoRatio_B05, fill = sample)) +
   geom_density(alpha = 0.2) +
   scale_x_log10() +
   theme_classic() +
-  geom_vline(xintercept = 0.02)
+  geom_vline(xintercept = 0.01)
 
 metadata %>%
-  ggplot(aes(color = sample, x = riboRatio, fill = sample)) +
+  ggplot(aes(color = sample, x = riboRatio_B01, fill = sample)) +
   geom_density(alpha = 0.2) +
   scale_x_log10() +
   theme_classic() +
-  geom_vline(xintercept = 0.04)
+  geom_vline(xintercept = 0.02)
 
 metadata %>%
-  ggplot(aes(x = sample, log10GenesPerUMI_B05, fill = sample)) +
+  ggplot(aes(x = sample, log10GenesPerUMI_B01, fill = sample)) +
   geom_violin() +
   geom_boxplot(width = 0.1, fill = alpha("white", 0.7)) +
   theme_classic() +
@@ -128,14 +128,19 @@ metadata %>%
 # ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 #                                  Filtering                               ----
 # ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
-## Lots of noise in this dataset. Want to have strict QC filtering here
-seurat <- subset(seurat, nFeature_B05 > 300 & 
-                   nCount_B05 > 500 & 
+## Lots of noise in this dataset. Want to have Very strict QC filtering here
+seurat <- subset(seurat, nFeature_B01 > 500 & 
+                   nCount_B01 > 700 & 
                    mitoRatio_ranger < 0.02 & 
-                   mitoRatio_B01 < 0.02 &
-                   mitoRatio_B05 < 0.02 &
-                   log10GenesPerUMI_B05 > 0.8)
+                   mitoRatio_B01 < 0.01 &
+                   mitoRatio_B05 < 0.01 &
+                   riboRatio_B01 < 0.02 &
+                   log10GenesPerUMI_B01 > 0.8 &
+                   nCount_B01 < 8000)
 
+## remove doublets identified by both approaches
+doublet_cells <- seurat$barcode[seurat$scDbl_class_B01 == "doublet" & seurat$doubletfind_class_ranger == "doublet"]
+seurat <- seurat[,!(seurat$barcode %in% doublet_cells)]
 
 # ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 #                                  Save Data                               ----
