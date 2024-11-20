@@ -1,8 +1,10 @@
-# ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
-#                                 Functions                                ----
-# ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+#'
+#' Functions to automatically run dublet detection algorithms
+#' Functions are wrapped in run_all_doublet_detection
+#' returns a seurat_obj with the doublet information added to the meta.data
+#' 
 
-## run scDblFinder -returns split seurat object
+# run scDblFinder -returns split seurat object
 run_scDblFinder <- function(seurat_split){
   for (sample_index in 1:length(seurat_split)) {
     dbl_out <- scDblFinder(
@@ -24,7 +26,7 @@ run_scDblFinder <- function(seurat_split){
 
 
 
-## run scds doublet scoring -returns split seurat object
+# run scds doublet scoring -returns split seurat object
 run_scds <- function(seurat_split){
   for (sample_index in 1:length(seurat_split)) {
     sce <- as.SingleCellExperiment(seurat_split[[sample_index]])
@@ -41,7 +43,7 @@ run_scds <- function(seurat_split){
 }
 
 
-## run doubletfinder scoring -returns split seurat object
+# run doubletfinder scoring -returns split seurat object
 run_doubletfinder <- function(seurat_split){
   ## pK Identification (no ground-truth)
   gc()
@@ -73,7 +75,7 @@ run_doubletfinder <- function(seurat_split){
   return(seurat_split)
 }
 
-## add doublet metadata to merged seruat object
+# add doublet metadata to merged seruat object
 add_doublet_metadata <- function(seurat_obj, seurat_split){
   metalist <- lapply(seurat_split, function(x) {
     metadata <- x@meta.data

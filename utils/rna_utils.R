@@ -1,8 +1,16 @@
-# ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
-#                                 Functions                                ----
-# ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+#' 
+#' miscellaneous functions to aid in the analysis of scRNAseq datasets
+#' 
 
-## import to merged seurat object
+
+#' import to merged seurat object
+#' 
+#' loads from either a directory of directories with matrix, 
+#'   barcodes, and features files for each sample
+#'   or from a directory containing individual h5 files for each sample
+#'   
+#' Merges samples and adds preliminary metadata columns
+#' 
 import_seurat <- function(cellranger_folder_path, 
                           file_names_vec, 
                           file_h5_path = NA, 
@@ -54,6 +62,9 @@ import_seurat <- function(cellranger_folder_path,
   return(seurat)
 }
 
+#' import from cellbender output to merged seurat object
+#' 
+#' similar to import_seurat, but for cellbender
 
 import_seurat_from_cellbender <- function(cellranger_folder_path, file_names_vec, file_h5_path = NA) {
   
@@ -88,7 +99,10 @@ import_seurat_from_cellbender <- function(cellranger_folder_path, file_names_vec
 }
 
 
-
+#' scores a seurat_obj with panglao for celltype annotation
+#' returns a matrix with scores for each cluster
+#' columns are cluster numbers, rows are celltypes
+#' mainly used to help with manual annotation
 score_panglao <- function(seurat_obj){
   # returns a matrix of scaled celltype scores for each cluster 
   panglao <- readr::read_tsv("/media/largedata/universal_files/PanglaoDB_markers_27_Mar_2020.tsv")
