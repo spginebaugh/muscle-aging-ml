@@ -1,0 +1,482 @@
+---
+output: github_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = FALSE, warning = FALSE, message = FALSE, fig.width = 7, fig.height = 7, cache = FALSE)
+knitr::opts_knit$set(root.dir = rprojroot::find_rstudio_root_file())
+```
+
+```{r load_libraries, include = FALSE, message = FALSE, warning = FALSE}
+library(Seurat)
+library(MOFA2)
+library(MOFAcellulaR)
+library(qs)
+library(dplyr)
+library(tidyverse)
+library(magrittr)
+library(edgeR)
+library(DESeq2)
+library(nichenetr)
+
+library(ggplot2)
+library(ggprism)
+library(ggpmisc)
+library(knitr)
+
+source("utils/mofa_analysis_functions.R")
+source("utils/plotting_functions.R")
+
+set.seed(43648)
+```
+
+```{r import_data, include = FALSE, message = FALSE, warning = FALSE}
+seurat <- qread("data/processed/lai_preprocessed.qs")
+
+mofa_model <- qread("models/mofa_model1.qs")
+
+sample_meta <- read.csv("data/mofa_inputs/sample_metadata.csv")
+
+factor_score_perez <- read.csv("data/processed/factor_score_perez.csv", row.names = 1)
+perez_bulk_meta <- read.csv("data/processed/perez_bulk_metadata.csv", row.names = 1)
+```
+
+```{r parameters, include = FALSE, message = FALSE, warning = FALSE}
+factor_cutoff_score <- 0.3
+
+test_variable <- "age_bin"
+
+categorical_test_var <- c("age_bin","tech","sex")
+continous_test_var <- c("age_numeric")
+
+sample_id_column <- "sample"
+
+aging_factor <- select_important_factor(mofa_model, sample_meta, sample_id_column, test_variable)
+
+```
+
+```{r subset_seurat, include = FALSE, message = FALSE, warning = FALSE}
+cell_types <- unique(mofa_model@features_metadata[["view"]])
+
+seurat_subset <- seurat[, seurat$annotation_level1 %in% cell_types]
+
+
+```
+
+# Introduction
+
+A common method to identify potential therapeutic targets in transcriptomic data is to use differential expression (DE) to identify highly differentially expressed genes between two conditions. When it comes to single-cell/single-nucleus datasets, DE is great at identifying transcriptomic differences between cell types (a method commonly used to identify marker genes). ScRNAseq is also very useful for identifying differences in cell type quantities between samples/conditions. However, DE is often not ideal for identifying within-cluster, between-sample/condition transcriptomic changes in scRNAseq datasets (e.g., what are the transcriptomic differences between muscle endothelial cells from young and old individuals). This is because batch effects, noise, variation in the number of cells per sample, and variation in the number of samples/donors per condition are often quite large in scRNAseq, leading to in inaccurate results from DE.
+
+Cells can have both cell-type specific and shared responses to the same cue, and well as feedback loops that occur through cell-cell interactions and between-organ signals (e.g. hormones). These multicellular changes are sometimes referred to as "multicellular programs". Between-sample DE looks at one cell-type at a time and does not consider these multicellular programs, which can result in "missing the forest for the trees". This is especially true for aging, which clearly impacts every celltype in the body in numerous ways.
+
+We need more sophisticated methods that are able to extract important signals from noise and identify both celltype-specific and multicellular program changes. One such approach is to use Blind Source Separation techniques, such as PCA, ICA, and NMF. However, when applied directly to scRNAseq data, these methods will mainly identify differences between cell types. This limitation can be overcome by taking our genes x cells matrix, and turn it into a pseudobulk celltype x genes x samples tensor. We can then decompose the tensor with blind source separation to pull out the important biological signals.
+
+Here, we analyze single-nucleus RNAseq data from Lai et al. 2024 (https://doi.org/10.1038/s41586-024-07348-6) using MOFAcell (https://doi.org/10.7554/eLife.93161) -- a factor analysis approach to single cell data. Ideally, this method will identify a factor that is highly correlated with age. That "Aging Factor" should then contain a scored list of how much each gene contributes to aging in each cell type, independent of technical noise or other biological factors.
+
+
+# Results
+
+## Dataset overview
+
+This dataset contains muscle biopsies from n = 23 donors. Those donors were divided into two age groups: a younger population (15-46 years old, n = 8), and an older population (74-99 years old, n = 15). Of these donors, 6 were sequenced on both scRNAseq & snRNAseq, 16 were sequenced on snRNAseq only, and one was sequenced on scRNAseq only.
+
+After alignment, filtering, batch correction, and annotation, the final dataset consisted of 79649 cells and 212774 nuclei.
+
+
+```{r umap_overview, echo = FALSE, message = FALSE, warning = FALSE, fig.width = 12, fig.height = 7}
+DimPlot(seurat, group.by = c("annotation_level1", "tech" ,"age_group", "sex", "age_bin"), label = FALSE)
+```
+
+```{r umap_qc, echo = FALSE, message = FALSE, warning = FALSE, fig.width = 6, fig.height = 6}
+FeaturePlot(seurat, min.cutoff = "q1", max.cutoff = "q99",
+            features = c("nCount_RNA","nFeature_RNA","mitoRatio","riboRatio"))
+```
+
+In order to run our approach effectively, we removed celltypes with a small number of cells, leaving only the 10 major cell types in the dataset.
+
+```{r umap_celltypes_subset, echo = FALSE, message = FALSE, warning = FALSE, fig.width = 5, fig.height = 5}
+DimPlot(seurat_subset, group.by = c("annotation_level1"), label = TRUE)
+```
+
+## Identification of Aging Factor
+
+```{r factor_prep1, echo = FALSE, message = FALSE, warning = FALSE}
+factor_loadings <- get_geneweights(model = mofa_model, factor = aging_factor)
+
+assoc_list <- get_associations_list(mofa_model, 
+                                    sample_meta, 
+                                    sample_id_column,
+                                    categorical_test_var = categorical_test_var,
+                                    continuous_test_var = continous_test_var,
+                                    categorical_type = "not_parametric")
+
+
+all_factors <- MOFAcellulaR::get_tidy_factors(
+  model = mofa_model,
+  metadata = sample_meta,
+  factor = "all",
+  sample_id_column = sample_id_column
+)
+
+factor_score_mat <- do.call(rbind,get_factors(mofa_model, factors = "all", groups = "all"))
+```
+
+We construct the data tensor, then decompose it into 7 factors using MOFAcell. We see that Factor5 is strongly correlated with aging. 
+
+```{r plot_heatmap1, echo = FALSE, message = FALSE, warning = FALSE, fig.width = 9, fig.height = 7}
+plot_MOFA_hmap(
+  model = mofa_model,
+  group = FALSE,
+  metadata = sample_meta,
+  sample_id_column = sample_id_column,
+  sample_anns = c("age_bin", "age_numeric", "sex", "tech"),
+  assoc_list = assoc_list
+)
+```
+
+```{r aging_pval_table, echo = FALSE, message = FALSE, warning = FALSE, fig.width = 9, fig.height = 7}
+MOFAcellulaR::get_associations(mofa_model, sample_meta, sample_id_column, "age_bin", categorical_type = "parametric") %>% 
+  kable()
+```
+
+
+This factor is able to separate old from young samples even across different sample preparation methodologies. 
+
+```{r group_boxplot_Factor5, echo = FALSE, message = FALSE, warning = FALSE, fig.width = 5, fig.height = 5}
+group_boxplot <- create_factor_expr_group_boxplot(
+  all_factors,
+  aging_factor,
+  xvar = "tech", 
+  yvar = "value", 
+  fillvar = "age_bin"
+)
+plot(group_boxplot)
+```
+
+This is particularly impressive because there are large differences in celltypes between the two methodologies, so this approach is able to pull system-wide signals out of complex datasets. Additionally, this approach is completely unsupervised -- at no point was the algorithm informed of sample classifications.
+
+```{r umap_celltype_split, echo = FALSE, message = FALSE, warning = FALSE, fig.width = 9, fig.height = 5}
+DimPlot(seurat_subset, group.by = c("annotation_level1"), split.by = "tech", label = TRUE)
+```
+
+Other Factors are strongly correlated with technical batch effects or artifacts. For example, Factor1 represents the batch effects between cells and nuceli. 
+
+```{r group_boxplot_Factor1, echo = FALSE, message = FALSE, warning = FALSE, fig.width = 5, fig.height = 5}
+group_boxplot <- create_factor_expr_group_boxplot(
+  all_factors,
+  "Factor1",
+  xvar = "tech", 
+  yvar = "value", 
+  fillvar = "age_bin"
+)
+plot(group_boxplot)
+```
+
+Factor3 is strongly correlated with the mean counts per cell of each sample.
+
+```{r factor1_cor, echo = FALSE, message = FALSE, warning = FALSE, fig.width = 5, fig.height = 5}
+mean_sample_qc_scores <- seurat@meta.data[, c("donor_tech", "mitoRatio", "nCount_RNA", "nFeature_RNA", "riboRatio", "log10GenesPerUMI")] %>%
+  group_by(donor_tech) %>%
+  summarise_all("mean") %>%
+  left_join(
+    .,
+    rownames_to_column(data.frame(factor_score_mat), var = "donor_tech"),
+    by = "donor_tech"
+  ) %>%
+  select(-donor_tech)
+
+mean_sample_qc_scores %>%
+  ggplot(aes(x = Factor3, y = nCount_RNA)) +
+  geom_point() +
+  stat_poly_eq(use_label("R2","P"), size = 5) +
+  stat_poly_line(se = FALSE) +
+  theme_prism() +
+  theme(aspect.ratio = 1) +
+  ggtitle("Mean nCount_RNA vs Factor 3 Score")
+
+```
+
+## Analysis of the Aging Factor
+
+Now that we have identified the Aging Factor and shown that it is independent of technical noise, we will analyze the factor to extract biological insights. 
+
+First, we can investigate how much each celltype contributes to the Aging Factor. We see that the skeletal muscle cells are the strongest contributors, followed by Fibro-adipogenic progenitors. This is not surprising, since the FAPs are known to be regulators of MuSC function and muscle regeneration, and are known to be perturbed by aging.
+
+```{r celltype_contributions, echo = FALSE, message = FALSE, warning = FALSE, fig.width = 5, fig.height = 5}
+variance_explained_barplot <- create_variance_explained_barplot(mofa_model, aging_factor)
+variance_explained_barplot
+```
+
+Next, we look at the the gene contributions to the Aging Factor in each celltype. We see that a large majority of genes only contribute to the Aging Factor in a few cell types. However, there about 14% of genes contribute to the Aging Factor in 3 or more celltypes. Further analysis of these genes could identify high-value targets to reverse age-related muscle wasting across multiple celltypes (but is not included in this analysis here).
+
+```{r gene_contribution_plots, echo = FALSE, message = FALSE, warning = FALSE, fig.width = 5, fig.height = 5}
+gene_counts_in_factor <- get_gene_counts_in_factor(factor_loadings, factor_cutoff_score)
+shared_genes_table <- get_shared_genes_table(factor_loadings, factor_cutoff_score)
+
+shared_genes_plot <- create_shared_genes_plot(shared_genes_table)
+plot(shared_genes_plot)
+```
+
+Unsurprisingly, we see a strong concordance in celltype contributions between closely related celltypes (e.g. FastSKM & SlowSKM, or FAPs and Tenocytes).
+
+```{r factor_loading_heatmap, echo = FALSE, message = FALSE, warning = FALSE, fig.width = 5, fig.height = 5}
+factor_loadings_mat <- get_factor_loadings_matrix(mofa_model, aging_factor)
+
+Heatmap(
+  factor_loadings_mat, 
+  show_row_names = FALSE,
+  heatmap_legend_param = list(title = "Gene Contribution")
+  )
+```
+
+We can input these gene lists into downstream methods, either by taking the top genes or by using the factor score of each gene for each celltype similar to a names logfoldchange vector.
+
+For example, we perform pathway enrichment analysis of the Aging Factor. We see that younger samples are highly enriched in pathways related to myogenesis and fatty acid metabolism. This is consistent with the literature, which shows that fatty acid metabolism is disregulated in muscle during aging; research in mice has demonstrated that restoring fatty acid metabolism to healthy levels in aged mice restores muscle mass and strength (https://doi.org/10.1126/science.abc8059).
+
+We see that the older samples are enriched in pathways related to inflammation and DNA damage. This points to targeting inflammaging as a potential treatment for age-related muscle wasting. In my opinion, this is likely the most important mechanism to target. A [recent study](https://doi.org/10.1038/s41586-024-07701-9) found that blocking the inflammatory cytokine interleukin-11 increased lifespan in both male and female mice by over 20%, and helped them retain healthy body composition for longer. 
+
+
+```{r hallmark_pathway_enrichment, echo = FALSE, message = FALSE, warning = FALSE}
+hallmark_pathways <- qusage::read.gmt("data/processed/h.all.v2023.1.Hs.symbols.gmt")
+
+pval_cutoff <- 0.1
+
+factor_loadings_filt <- factor_loadings %>% dplyr::filter(abs(value) >= factor_cutoff_score)
+
+factor_loadings_split <- factor_loadings_filt %>%
+  dplyr::rename(
+    "celltype" = "ctype",
+    "gene" = "feature"
+  ) %>%
+  dplyr::filter(value != 0) %>%
+  dplyr::mutate(dir = ifelse(value > 0, "young", "old")) %>%
+  dplyr::mutate(celltype = paste0(celltype, "_", dir)) %>%
+  dplyr::select(-dir) %>%
+  dplyr::mutate(value = abs(value))
+
+factor_loadings_split_list <- factor_loadings_split %>%
+  dplyr::select(-value) %>%
+  dplyr::group_by(celltype) %>%
+  nest() %>%
+  dplyr::mutate(data = map(data, ~ .x[[1]])) %>%
+  deframe()
+
+
+
+gseAnalysis <- function(geneList,Annotation_DB){
+  
+  geneList = geneList[geneList %in% unique(unlist(Annotation_DB))]
+  
+  ResultsDF = matrix(0,nrow = length(Annotation_DB),ncol = 5)
+  rownames(ResultsDF) = names(Annotation_DB)
+  colnames(ResultsDF) = c("GenesInPathway","GenesInList","GeneNames","p_value","corr_p_value")
+  
+  DB_genecontent = length(unique(unlist(Annotation_DB)))
+  GenesDB = DB_genecontent 
+  SelectedGenes = length(geneList)
+  
+  for(gset in rownames(ResultsDF)){
+    GP = length(Annotation_DB[[gset]])
+    GL = length(intersect(Annotation_DB[[gset]],geneList))
+    
+    ResultsDF[gset,"GenesInList"] = GL
+    ResultsDF[gset,"GenesInPathway"] = GP
+    ResultsDF[gset,"GeneNames"] = paste(intersect(Annotation_DB[[gset]],geneList),collapse = ",")
+    ResultsDF[gset,"p_value"] = phyper(q=GL - 1, m=GP, n=GenesDB-GP, k=SelectedGenes, lower.tail = FALSE, log.p = FALSE)
+  }
+  
+  ResultsDF[,"corr_p_value"] = p.adjust(ResultsDF[,"p_value"],method = "BH")
+  ResultsDF = data.frame(ResultsDF,stringsAsFactors = F)
+  ResultsDF = ResultsDF[order(ResultsDF[,"p_value"]),]
+  
+  ResultsDF = ResultsDF %>% 
+    rownames_to_column("gset") %>% 
+    mutate_at(c("GenesInPathway","GenesInList",
+                "p_value","corr_p_value"), 
+              as.numeric) %>% 
+    dplyr::arrange(corr_p_value,GenesInList)
+  
+  return(ResultsDF)
+}
+
+split_path_enrich <- map(factor_loadings_split_list, gseAnalysis, Annotation_DB = hallmark_pathways)
+```
+
+```{r hallmark_pathway_plotting, echo = FALSE, message = FALSE, warning = FALSE}
+## downregulated pathways (old)
+col_fun_fact_neg <- circlize::colorRamp2(seq(0, 5, length = 50), hcl.colors(50, "Blues", rev = T))
+
+neg_sets <- split_path_enrich %>%
+  enframe() %>%
+  unnest(cols = c(value)) %>%
+  dplyr::filter(corr_p_value < pval_cutoff,grepl("old", name)) %>%
+  dplyr::group_by(name) %>%
+  pull(gset)
+neg_sets <- neg_sets[duplicated(neg_sets)] # only use pathwasy expressed in >1 cell type
+
+neg_enrichment <- split_path_enrich %>%
+  enframe() %>%
+  unnest(cols = c(value)) %>%
+  dplyr::filter(gset %in% neg_sets,grepl("old", name)) %>%
+  dplyr::mutate(corr_p_value = -log10(corr_p_value)) %>%
+  dplyr::mutate(corr_p_value = ifelse(corr_p_value > 5, 5, corr_p_value)) %>%
+  dplyr::mutate(
+    gset = gsub("HALLMARK_", "", gset) %>% strtrim(width = 40),
+    name = gsub("_old", "", name)
+  )
+
+neg_plot <- neg_enrichment %>%
+  dplyr::select(name, gset, corr_p_value) %>%
+  pivot_wider(names_from = name, values_from = corr_p_value) %>%
+  column_to_rownames("gset") %>%
+  as.matrix() %>%
+  ComplexHeatmap::Heatmap(.,
+    name = "old \n-log(pval)",
+    show_row_dend = F,
+    show_column_dend = F,
+    row_names_gp = grid::gpar(fontsize = 8),
+    column_names_gp = grid::gpar(fontsize = 10),
+    col = col_fun_fact_neg, 
+    column_title = "Enriched Pathways in Old Muscle"
+  )
+plot(neg_plot)
+
+
+## upregulated pathways (young)
+col_fun_fact_pos <- circlize::colorRamp2(seq(0, 5, length = 50), hcl.colors(50, "Reds", rev = T))
+
+pos_sets <- split_path_enrich %>%
+  enframe() %>%
+  unnest(cols = c(value)) %>%
+  dplyr::filter(
+    corr_p_value <= pval_cutoff,
+    grepl("young", name)
+  ) %>%
+  dplyr::group_by(name) %>%
+  dplyr::slice(1:6) %>%
+  pull(gset)
+pos_sets <- pos_sets[duplicated(pos_sets)] # only use pathwasy expressed in >1 cell type
+
+pos_enrichment <- split_path_enrich %>%
+  enframe() %>%
+  unnest(cols = c(value)) %>%
+  dplyr::filter(
+    gset %in% pos_sets,
+    grepl("young", name)
+  ) %>%
+  dplyr::mutate(corr_p_value = -log10(corr_p_value)) %>%
+  dplyr::mutate(corr_p_value = ifelse(corr_p_value > 5, 5, corr_p_value)) %>%
+  dplyr::mutate(
+    gset = gsub("HALLMARK_", "", gset) %>% strtrim(width = 35),
+    name = gsub("_young", "", name)
+  )
+pos_plot <- pos_enrichment %>%
+  dplyr::select(name, gset, corr_p_value) %>%
+  pivot_wider(names_from = name, values_from = corr_p_value) %>%
+  column_to_rownames("gset") %>%
+  ComplexHeatmap::Heatmap(.,
+    name = "young \n-log(pval)",
+    show_row_dend = F,
+    show_column_dend = F,
+    row_names_gp = grid::gpar(fontsize = 8),
+    column_names_gp = grid::gpar(fontsize = 10),
+    col = col_fun_fact_pos,
+    column_title = "Enriched Pathways in Young Muscle"
+  )
+
+plot(pos_plot)
+
+```
+
+## Projection onto bulk datasets
+
+
+We can extend that analysis by projecting the Aging Factor onto bulk RNAseq datasets. Although scRNAseq is great for its ability to investigate different cell types, its cost often results in a small number of donors per dataset. This is true for the snRNAseq dataset of interest, which had N=17 donors. Although this is on the larger end for a single-cell dataset, N=17 is not enough donors to get strong correlations between transcriptomic signatures and clinical information. Bulk RNAseq is much cheaper in comparison, so bulk RNAseq datasets tend to contain more donors, which enables better correlations with clinical measurements. 
+
+Here, we project the Aging Factor onto a large bulkRNAseq dataset (also from the Perez et al. manuscript) of muscle aging and [sarcopenia](https://en.wikipedia.org/wiki/Sarcopenia) (age-related muscle wasting). We show that the Aging Factor projection is able to separate donors by condition, and is a better predictor of clinical measurements of muscle strength than medical diagnosis.
+
+This bulk RNAseq dataset consists of 19 Young Health donors, 33 Old Healthy donors, and 24 old donors diagnosed with sarcopenia. We then project the aging factor from the single-cell dataset onto the bulk RNAseq dataset, and can see that it generally separates the three clinical groups.
+
+```{r project_onto_human, echo = FALSE, message = FALSE, warning = FALSE, fig.width = 7, fig.height = 5}
+## organize for plotting
+factor_score_perez <- factor_score_perez[order(rownames(factor_score_perez)), sort(colnames(factor_score_perez))]
+perez_bulk_meta <- perez_bulk_meta[order(rownames(perez_bulk_meta)), ]
+perez_bulk_meta$group %<>% as.character()
+
+perez_bulk_meta$group %<>% factor(levels = c("Young Healthy", "Old Healthy", "Sarcopenia"))
+
+row_ha <- rowAnnotation(
+  condition = perez_bulk_meta$group,
+  col = list(condition = c(
+    "Young Healthy" = "green",
+    "Old Healthy" = "yellow",
+    "Sarcopenia" = "darkred"
+  ))
+)
+
+Heatmap(
+  factor_score_perez,
+  right_annotation = row_ha,
+  show_row_names = FALSE,
+  clustering_method_rows = "ward.D",
+  column_title = "Projection of Aging Factor onto Human Bulk RNAseq",
+  heatmap_legend_param = list(title = "Factor Projection Score")
+)
+```
+
+```{r human_proj_celltype_diff, echo = FALSE, message = FALSE, warning = FALSE, fig.width = 7, fig.height = 5}
+plot_fact_cell_proj <- data.frame(factor_score_perez, group = perez_bulk_meta$group) %>% reshape2::melt()
+plot_fact_cell_proj$group %<>% factor(levels = c("Young Healthy", "Old Healthy", "Sarcopenia"))
+
+ggplot(plot_fact_cell_proj, aes(x = variable, y = value, fill = group)) +
+  geom_boxplot() +
+  theme_prism() +
+  theme(axis.text.x = element_text(angle = 45, vjust = 1, hjust = 1)) +
+  xlab(label = "") +
+  ylab(label = "Aging Factor Score")
+```
+
+
+
+<!-- ```{r project_onto_human_oldonly, include = FALSE, message = FALSE, warning = FALSE} -->
+<!-- ## redo with only aged for clinical correlations -->
+<!-- perez_bulk_meta_old <- perez_bulk_meta[perez_bulk_meta$group != "Young Healthy",] -->
+<!-- factor_score_perez_old <- factor_score_perez[rownames(factor_score_perez) %in% perez_bulk_meta_old$sample,] -->
+
+
+<!-- ## organize for plotting -->
+<!-- factor_score_perez_old <- factor_score_perez_old[order(rownames(factor_score_perez_old)), sort(colnames(factor_score_perez_old))] -->
+<!-- perez_bulk_meta_old <- perez_bulk_meta_old[order(rownames(perez_bulk_meta_old)), ] -->
+<!-- perez_bulk_meta_old$group %<>% as.character() -->
+
+<!-- perez_bulk_meta_old$group %<>% factor(levels = c("Old Healthy", "Sarcopenia")) -->
+
+<!-- ``` -->
+
+<!-- ```{r human_clinical_correlations, fig.width = 12, echo = FALSE, message = FALSE, warning = FALSE} -->
+<!-- clin_cor <- data.frame(factor_score = factor_score_perez_old[,5], perez_bulk_meta_old[, c(6, 2:5, 7:9)]) %>%  -->
+<!--   rownames_to_column("sample") %>% -->
+<!--   reshape2::melt(id.vars = c("factor_score", "sample", "group")) %>% -->
+<!--   filter(variable != "walkTest") -->
+
+<!-- ggplot(clin_cor, aes(x = factor_score, y = value)) + -->
+<!--   geom_point(aes(color = group)) + -->
+<!--   theme_classic() + -->
+<!--   facet_wrap(~variable, scale = "free_y") + -->
+<!--   stat_poly_line(se = FALSE) + -->
+<!--   ylab("Clinical Measurement") + -->
+<!--   xlab("Aging Factor Expression") -->
+<!-- ``` -->
+
+
+# Conclusion
+
+Here, we have shown that we can extend factor analysis to scRNAseq data, and that this technique is a powerful method to extract important biological signal from technical noise. We additionally show that utilizing this method on a snRNAseq muscle aging dataset can identify the biological signature of aging, and that this signature is aligned with experimental results. Further analysis into the genes of this Aging Factor can reveal potential therapuetic targets for muscle wasting diseases like sarcopenia.
+
+The factor extracted from this approach can be used similar to logFC values and passed to downstream methods, such as drug repuroposing (https://doi.org/10.1038/s41467-023-36637-3) or cell-cell communication analysis (https://doi.org/10.1038/s41592-019-0667-5, https://doi.org/10.1101/2023.08.19.553863 ). 
+
+Additionally, we can project these factors onto bulk RNAseq data for a powerful analysis of disease states, and clinical data.
+
+
+
+
