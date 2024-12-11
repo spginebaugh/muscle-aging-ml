@@ -41,6 +41,13 @@ factor_score_perez <- read.csv("data/processed/factor_score_perez.csv", row.name
 perez_bulk_meta <- read.csv("data/processed/perez_bulk_metadata.csv", row.names = 1)
 ```
 
+```{r optional_memory_reduction, include = FALSE, message = FALSE, warning = FALSE}
+seurat@assays[["RNA"]]@layers[["counts"]] <- NULL
+seurat@assays[["RNA"]]@layers[["scale.data"]] <- NULL
+gc()
+```
+
+
 ```{r parameters, include = FALSE, message = FALSE, warning = FALSE}
 factor_cutoff_score <- 0.3
 
@@ -237,7 +244,8 @@ We see that the older samples are enriched in pathways related to inflammation a
 
 
 ```{r hallmark_pathway_enrichment, echo = FALSE, message = FALSE, warning = FALSE}
-hallmark_pathways <- qusage::read.gmt("data/processed/h.all.v2023.1.Hs.symbols.gmt")
+hallmark_pathways <- clusterProfiler::read.gmt("data/processed/h.all.v2023.1.Hs.symbols.gmt")
+hallmark_pathways <- split(hallmark_pathways$gene, hallmark_pathways$term)
 
 pval_cutoff <- 0.1
 
