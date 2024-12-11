@@ -1,10 +1,12 @@
-#'
-#' Functions to automatically run dublet detection algorithms
-#' Functions are wrapped in run_all_doublet_detection
-#' returns a seurat_obj with the doublet information added to the meta.data
+#' Run Doublet Detection with scDblFinder
 #' 
-
-# run scDblFinder -returns split seurat object
+#' Applies the scDblFinder algorithm to detect doublets in a list of Seurat objects.
+#' 
+#' @param seurat_split List of Seurat objects split by sample
+#' @return List of Seurat objects with scDblFinder results added to metadata
+#' @details Processes each sample separately and adds two columns to the metadata:
+#'          'barcode' and 'scDbl_class'. The classification is stored in the 
+#'          'scDbl_class' column of the metadata.
 run_scDblFinder <- function(seurat_split){
   for (sample_index in 1:length(seurat_split)) {
     dbl_out <- scDblFinder(
@@ -24,9 +26,17 @@ run_scDblFinder <- function(seurat_split){
   return(seurat_split)
 }
 
-
-
-# run scds doublet scoring -returns split seurat object
+#' Run SCDS Doublet Detection
+#' 
+#' Applies the SCDS algorithm suite (cxds, bcds, and hybrid) to detect doublets 
+#' in a list of Seurat objects.
+#' 
+#' @param seurat_split List of Seurat objects split by sample
+#' @return List of Seurat objects with SCDS scores added to metadata
+#' @details Adds three scoring columns to the metadata:
+#'          - cxds_score: Co-expression based doublet scoring
+#'          - bcds_score: Binary classification-based doublet scoring
+#'          - hybrid_score: Hybrid scoring combining both methods
 run_scds <- function(seurat_split){
   for (sample_index in 1:length(seurat_split)) {
     sce <- as.SingleCellExperiment(seurat_split[[sample_index]])
@@ -42,8 +52,15 @@ run_scds <- function(seurat_split){
   return(seurat_split)
 }
 
-
-# run doubletfinder scoring -returns split seurat object
+#' Run DoubletFinder Detection
+#' 
+#' Applies the DoubletFinder algorithm to detect doublets in a list of Seurat objects.
+#' 
+#' @param seurat_split List of Seurat objects split by sample
+#' @return List of Seurat objects with DoubletFinder results added to metadata
+#' @details Performs parameter optimization using paramSweep and assumes a 5% doublet 
+#'          formation rate. Uses the first 10 principal components for analysis.
+#'          Adds classification and scoring columns to the metadata.
 run_doubletfinder <- function(seurat_split){
   ## pK Identification (no ground-truth)
   gc()
@@ -71,11 +88,25 @@ run_doubletfinder <- function(seurat_split){
       nExp = nexp_poi[[sample_index]], reuse.pANN = FALSE, sct = FALSE
     )
   }
-
+  
   return(seurat_split)
 }
 
-# add doublet metadata to merged seruat object
+#' Add Doublet Detection Results to Merged Seurat Object
+#' 
+#' Combines doublet detection results from multiple algorithms into a single 
+#' merged Seurat object.
+#' 
+#' @param seurat_obj Original merged Seurat object
+#' @param seurat_split List of Seurat objects with doublet detection results
+#' @return Merged Seurat object with all doublet detection results in metadata
+#' @details Adds the following columns to the metadata:
+#'          - scDbl_class: Classification from scDblFinder
+#'          - cxds_score: Score from SCDS cxds
+#'          - bcds_score: Score from SCDS bcds
+#'          - hybrid_score: Score from SCDS hybrid method
+#'          - doubletfind_score: Score from DoubletFinder
+#'          - doubletfind_class: Classification from DoubletFinder
 add_doublet_metadata <- function(seurat_obj, seurat_split){
   metalist <- lapply(seurat_split, function(x) {
     metadata <- x@meta.data
@@ -98,6 +129,20 @@ add_doublet_metadata <- function(seurat_obj, seurat_split){
   return(seurat_obj)
 }
 
+#' Run Complete Doublet Detection Pipeline
+#' 
+#' Executes a comprehensive doublet detection workflow using multiple algorithms.
+#' 
+#' @param seurat_obj Seurat object to analyze
+#' @param split.by Column name to split the dataset by (default: "sample")
+#' @return Seurat object with results from all doublet detection methods added to metadata
+#' @details Pipeline steps:
+#'          1. Splits Seurat object by sample
+#'          2. Performs standard preprocessing (normalization, feature selection, scaling, PCA)
+#'          3. Runs scDblFinder
+#'          4. Runs SCDS (cxds, bcds, hybrid)
+#'          5. Runs DoubletFinder
+#'          6. Combines all results in the original Seurat object
 run_all_doublet_detection <- function(seurat_obj, split.by = "sample"){
   seurat_split <- SplitObject(seurat_obj, split.by = "sample")
   

@@ -1,16 +1,26 @@
+#' Import and Create Merged Seurat Object
 #' 
-#' miscellaneous functions to aid in the analysis of scRNAseq datasets
+#' Imports single-cell RNA sequencing data from multiple samples and creates a merged 
+#' Seurat object. Supports both H5 and MTX file formats from Cell Ranger output.
 #' 
-
-
-#' import to merged seurat object
+#' @param cellranger_folder_path Character string specifying the base path to Cell Ranger output
+#' @param file_names_vec Vector of sample names/folders to import
+#' @param file_h5_path Character string specifying the path to H5 file relative to sample folder (default: NA)
+#' @param import_method Character string specifying import format ("h5" or "mtx", default: "h5")
+#' @param subset_cell_names Vector of cell names to subset (default: NA)
+#' @return A merged Seurat object containing all samples
+#' @details 
+#' For H5 files:
+#'   - Expects one H5 file per sample in the specified directory
+#' For MTX files:
+#'   - Expects matrix, barcodes, and features files in each sample directory
 #' 
-#' loads from either a directory of directories with matrix, 
-#'   barcodes, and features files for each sample
-#'   or from a directory containing individual h5 files for each sample
-#'   
-#' Merges samples and adds preliminary metadata columns
-#' 
+#' The function:
+#' 1. Reads each sample's data
+#' 2. Creates individual Seurat objects
+#' 3. Merges all objects
+#' 4. Adds sample information to metadata
+#' 5. Adds cell barcodes to metadata
 import_seurat <- function(cellranger_folder_path, 
                           file_names_vec, 
                           file_h5_path = NA, 
@@ -62,20 +72,32 @@ import_seurat <- function(cellranger_folder_path,
   return(seurat)
 }
 
-#' import from cellbender output to merged seurat object
+#' Import CellBender Output to Merged Seurat Object
 #' 
-#' similar to import_seurat, but for cellbender
-
+#' Imports and merges single-cell RNA sequencing data that has been processed 
+#' with CellBender for ambient RNA removal.
+#' 
+#' @param cellranger_folder_path Character string specifying the base path to CellBender output
+#' @param file_names_vec Vector of sample names/folders to import
+#' @param file_h5_path Character string specifying the path to H5 file relative to sample folder (default: NA)
+#' @return A merged Seurat object containing all CellBender-processed samples
+#' @details 
+#' Similar to import_seurat but specifically handles CellBender output format.
+#' The function:
+#' 1. Reads CellBender-processed H5 files
+#' 2. Creates individual Seurat objects
+#' 3. Merges all objects
+#' 4. Adds sample information and cell barcodes to metadata
 import_seurat_from_cellbender <- function(cellranger_folder_path, file_names_vec, file_h5_path = NA) {
   
   seurat_list <- list()
   
   for (file_index in 1:length(file_names_vec)) {
-      seurat_data <- Read_CellBender_h5_Mat(file_name = paste0(
-        cellranger_folder_path,
-        file_names_vec[file_index],
-        file_h5_path
-      ))
+    seurat_data <- Read_CellBender_h5_Mat(file_name = paste0(
+      cellranger_folder_path,
+      file_names_vec[file_index],
+      file_h5_path
+    ))
     seurat_list[file_index] <- CreateSeuratObject(
       counts = seurat_data,
       project = file_names_vec[file_index]
@@ -98,11 +120,24 @@ import_seurat_from_cellbender <- function(cellranger_folder_path, file_names_vec
   return(seurat)
 }
 
-
-#' scores a seurat_obj with panglao for celltype annotation
-#' returns a matrix with scores for each cluster
-#' columns are cluster numbers, rows are celltypes
-#' mainly used to help with manual annotation
+#' Score Clusters Using PanglaoDB Markers
+#' 
+#' Calculates cell type scores for each cluster using marker genes from PanglaoDB database.
+#' 
+#' @param seurat_obj Seurat object with defined clusters
+#' @return Matrix of scaled cell type scores for each cluster
+#' @details 
+#' The function:
+#' 1. Loads PanglaoDB marker genes (human and mouse)
+#' 2. Filters for genes present in the dataset
+#' 3. Calculates module scores for each cell type
+#' 4. Aggregates scores by cluster
+#' 5. Returns a matrix where:
+#'    - Rows are cell types from PanglaoDB
+#'    - Columns are cluster numbers
+#'    - Values are scaled average module scores
+#' 
+#' Note: Requires PanglaoDB marker file at "/media/largedata/universal_files/PanglaoDB_markers_27_Mar_2020.tsv"
 score_panglao <- function(seurat_obj){
   # returns a matrix of scaled celltype scores for each cluster 
   panglao <- readr::read_tsv("/media/largedata/universal_files/PanglaoDB_markers_27_Mar_2020.tsv")
@@ -127,15 +162,3 @@ score_panglao <- function(seurat_obj){
   agg_pang <- t(agg_pang)
   return(agg_pang)
 }
-
-
-
-
-
-
-
-
-
-
-
-
